@@ -1,268 +1,240 @@
-const BASE_URLS = Object.freeze({
-  account: 'https://uiflow2.m5stack.com',
-  admin: 'http://m5burner-api.m5stack.com',
-  firmwareCdn: 'http://m5burner-api-fc-hk-cdn.m5stack.com',
-  cover: 'http://m5burner.m5stack.com',
-  mediaToken: 'http://flow.m5stack.com:5003',
-});
+const { M5_AUTH_TOKEN } = process?.env ?? {};
 
-const ensureFetch = () => {
-  if (typeof fetch !== 'function') {
-    throw new Error('Global fetch is unavailable. Use Node.js 18+ or supply a ponyfill.');
+const wn_apiBaseUrl = 'http://m5burner-api.m5stack.com';
+
+const resolveFetch = (options) => {
+  const candidate = options?.fetch ?? globalThis.fetch;
+  if (typeof candidate !== 'function') {
+    throw new Error('Fetch implementation not available. Provide options.fetch.');
   }
-  return fetch;
+  return candidate;
 };
 
-const captureAuthCookie = (response) => {
-  const header = response.headers.get('set-cookie');
-  if (!header) return null;
-  const match = header.match(/m5_auth_token=([^;]+)/i);
-  return match ? match[1] : null;
-};
-
-const parseJson = async (response, fallbackMessage) => {
-  const text = await response.text();
-  if (!text) return null;
+const parseJsonStrict = async (response) => {
+  const body = await response.text();
+  if (!body) return {};
   try {
-    return JSON.parse(text);
-  } catch (error) {
-    const err = new Error(fallbackMessage);
-    err.status = response.status;
-    err.body = text;
-    throw err;
+    return JSON.parse(body);
+  } catch (cause) {
+    const error = new Error('Invalid JSON received from server.');
+    error.status = response.status;
+    error.cause = cause;
+    error.rawBody = body;
+    throw error;
   }
 };
 
-const handleResponse = async (response, expectJson = true) => {
-  const payload = expectJson ? await parseJson(response, 'Invalid JSON received from server.') : await response.text();
+const handleJsonResponse = async (response, errorMessage) => {
+  const data = await parseJsonStrict(response);
   if (!response.ok) {
-    const err = new Error(`Request failed with status ${response.status}`);
-    err.status = response.status;
-    err.body = payload;
-    throw err;
+    const error = new Error(errorMessage ?? data?.errMsg ?? data?.message ?? 'Request failed.');
+    error.status = response.status;
+    error.body = data;
+    throw error;
+  }
+  return data;
+};
+
+const handleTextResponse = async (response, errorMessage) => {
+  const text = await response.text();
+  if (!response.ok) {
+    const error = new Error(errorMessage ?? 'Request failed.');
+    error.status = response.status;
+    error.body = text;
+    throw error;
+  }
+  return text;
+};
+
+const authHeaders = (token) => {
+  if (!token) return {};
+  return {
+    Cookie: `m5_auth_token=${token}`,
+    m5_auth_token: token,
+  };
+};
+
+const isFileDescriptor = (value) => Boolean(value && typeof value === 'object' && 'value' in value);
+
+const mergeFormPayload = (payload = {}) => {
+  if ('fields' in payload || 'files' in payload) {
+    return { ...(payload.fields ?? {}), ...(payload.files ?? {}) };
   }
   return payload;
 };
 
-const authHeader = (token) => {
-  if (!token) {
-    throw new Error('This endpoint requires a valid m5_auth_token.');
-  }
-  return `m5_auth_token=${token}`;
-};
-
-const isBinary = (value) => {
-  if (!value) return false;
-  return value instanceof Blob || Buffer.isBuffer(value) || value instanceof ArrayBuffer || ArrayBuffer.isView(value);
-};
-
-const toBlob = (value, type) => {
-  if (value instanceof Blob) return value;
-  if (Buffer.isBuffer(value)) return new Blob([value], type ? { type } : undefined);
-  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
-    return new Blob([value], type ? { type } : undefined);
-  }
-  if (typeof value === 'string') return new Blob([value], type ? { type } : undefined);
-  throw new Error('Unsupported binary value.');
-};
-
-const toFormData = (payload = {}) => {
-  if (payload instanceof FormData) {
-    return payload;
-  }
-
+const buildFormData = (payload = {}) => {
+  const data = mergeFormPayload(payload);
   const form = new FormData();
-  for (const [key, value] of Object.entries(payload)) {
+  for (const [key, value] of Object.entries(data)) {
     if (value === undefined || value === null) continue;
-
-    if (typeof value === 'object' && 'value' in value) {
-      const blob = toBlob(value.value, value.type);
-      const filename = value.filename ?? undefined;
-      form.append(key, blob, filename);
+    if (isFileDescriptor(value)) {
+      const fileBlob = value.value instanceof Blob ? value.value : new Blob([value.value]);
+      form.append(key, fileBlob, value.filename ?? key);
       continue;
     }
-
-    if (isBinary(value)) {
-      form.append(key, toBlob(value));
+    if (value instanceof Blob) {
+      form.append(key, value, value.name ?? key);
       continue;
     }
-
     form.append(key, String(value));
   }
-
   return form;
 };
 
-export const urls = {
-  firmwareCover: (coverId) => {
-    if (!coverId) throw new Error('coverId is required');
-    return new URL(`/cover/${coverId}`, BASE_URLS.cover).toString();
-  },
-};
-
-export async function login({ email, password }, options = {}) {
-  if (!email || !password) {
-    throw new Error('email and password are required.');
-  }
-
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.account}/api/v1/account/login`, {
+export async function login({ email, password }, options) {
+  const fetchImpl = resolveFetch(options);
+  const response = await fetchImpl('https://uiflow2.m5stack.com/api/v1/account/login', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email, password }),
   });
-
-  const data = await handleResponse(response, true);
-  return { data, token: captureAuthCookie(response) };
+  const data = await handleJsonResponse(response, 'Login failed.');
+  const cookieHeader = response.headers.get('set-cookie') ?? '';
+  const tokenMatch = cookieHeader.match(/m5_auth_token=([^;]+)/);
+  const token = tokenMatch?.[1];
+  return { token, data };
 }
 
-export async function getDeviceList(token, options = {}) {
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.account}/api/v1/device/list`, {
-    headers: { Cookie: authHeader(token) },
+export async function getDeviceList(token = M5_AUTH_TOKEN, options) {
+  const fetchImpl = resolveFetch(options);
+  const response = await fetchImpl('https://uiflow2.m5stack.com/api/v1/device/list', {
+    method: 'GET',
+    headers: authHeaders(token),
   });
-  return handleResponse(response, true);
+  return handleJsonResponse(response, 'Failed to fetch device list.');
 }
 
-export async function getFirmwareList(options = {}) {
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.firmwareCdn}/api/firmware`);
-  return handleResponse(response, true);
+export async function getFirmwareList(options) {
+  const fetchImpl = resolveFetch(options);
+  const response = await fetchImpl('http://m5burner-api-fc-hk-cdn.m5stack.com/api/firmware');
+  return handleJsonResponse(response, 'Failed to fetch firmware list.');
 }
 
-export async function getOwnFirmware(token, options = {}) {
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const url = new URL(`${BASE_URLS.admin}/api/admin/firmware`);
-  if (options.username) {
-    url.searchParams.set('username', options.username);
+export async function publishFirmware(token = M5_AUTH_TOKEN, formPayload = {}, options) {
+  const fetchImpl = resolveFetch(options);
+  const body = buildFormData(formPayload);
+  const response = await fetchImpl(`${wn_apiBaseUrl}/api/admin/firmware`, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body,
+  });
+  return handleJsonResponse(response, 'Failed to publish firmware.');
+}
+
+export async function getOwnFirmware(token = M5_AUTH_TOKEN, options) {
+  const fetchImpl = resolveFetch(options);
+  const username = options?.username;
+  const url = new URL(`${wn_apiBaseUrl}/api/admin/firmware`);
+  if (username) {
+    url.searchParams.set('username', username);
   }
   const response = await fetchImpl(url.toString(), {
-    headers: { Cookie: authHeader(token) },
+    method: 'GET',
+    headers: authHeaders(token),
   });
-  return handleResponse(response, true);
+  return handleJsonResponse(response, 'Failed to fetch firmware.');
 }
 
-export async function publishFirmware(token, formPayload = {}, options = {}) {
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.admin}/api/admin/firmware`, {
-    method: 'POST',
-    headers: { Cookie: authHeader(token) },
-    body: toFormData(formPayload),
-  });
-  return handleResponse(response, true);
-}
-
-export async function updateFirmware(token, fid, version, formPayload = {}, options = {}) {
-  if (!fid || !version) {
-    throw new Error('fid and version are required.');
-  }
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.admin}/api/admin/firmware/${fid}/version/${version}`, {
+export async function updateFirmware(token = M5_AUTH_TOKEN, fid, version, formPayload = {}, options) {
+  const fetchImpl = resolveFetch(options);
+  const body = buildFormData(formPayload);
+  const response = await fetchImpl(`${wn_apiBaseUrl}/api/admin/firmware/${fid}/version/${version}`, {
     method: 'PUT',
-    headers: { Cookie: authHeader(token) },
-    body: toFormData(formPayload),
+    headers: authHeaders(token),
+    body,
   });
-  return handleResponse(response, true);
+  return handleJsonResponse(response, 'Failed to update firmware.');
 }
 
-export async function removeFirmwareVersion(token, fid, version, options = {}) {
-  if (!fid || !version) {
-    throw new Error('fid and version are required.');
-  }
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.admin}/api/admin/firmware/remove/${fid}`, {
+export async function removeFirmwareVersion(token = M5_AUTH_TOKEN, fid, version, options) {
+  const fetchImpl = resolveFetch(options);
+  const response = await fetchImpl(`${wn_apiBaseUrl}/api/admin/firmware/remove/${fid}`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      Cookie: authHeader(token),
+      ...authHeaders(token),
+      'content-type': 'application/json',
     },
     body: JSON.stringify({ version }),
   });
-  return handleResponse(response, true);
+  return handleJsonResponse(response, 'Failed to remove firmware version.');
 }
 
-export async function setFirmwarePublishState(token, fid, version, publish, options = {}) {
-  if (!fid || !version) {
-    throw new Error('fid and version are required.');
-  }
-  const flag = publish ? 1 : 0;
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.admin}/api/admin/firmware/${fid}/publish/${version}/${flag}`, {
+export async function setFirmwarePublishState(token = M5_AUTH_TOKEN, fid, version, publish, options) {
+  const fetchImpl = resolveFetch(options);
+  const state = publish ? 1 : 0;
+  const response = await fetchImpl(`${wn_apiBaseUrl}/api/admin/firmware/${fid}/publish/${version}/${state}`, {
     method: 'PUT',
-    headers: { Cookie: authHeader(token) },
+    headers: authHeaders(token),
   });
-  return handleResponse(response, true);
+  return handleJsonResponse(response, 'Failed to update publish state.');
 }
 
-export async function getShareCode(token, fid, file, options = {}) {
-  if (!fid || !file) {
-    throw new Error('fid and firmware file name are required.');
-  }
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.admin}/api/admin/firmware/share/${fid}/${file}`, {
+export async function getShareCode(token = M5_AUTH_TOKEN, fid, file, options) {
+  const fetchImpl = resolveFetch(options);
+  const response = await fetchImpl(`${wn_apiBaseUrl}/api/admin/firmware/share/${fid}/${file}`, {
     method: 'POST',
-    headers: { Cookie: authHeader(token) },
+    headers: authHeaders(token),
   });
-  return handleResponse(response, true);
+  return handleJsonResponse(response, 'Failed to get share code.');
 }
 
-export async function revokeShareCode(token, shareId, options = {}) {
-  if (!shareId) {
-    throw new Error('shareId is required.');
-  }
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.admin}/api/admin/firmware/share/${shareId}`, {
+export async function revokeShareCode(token = M5_AUTH_TOKEN, shareId, options) {
+  const fetchImpl = resolveFetch(options);
+  const response = await fetchImpl(`${wn_apiBaseUrl}/api/admin/firmware/share/${shareId}`, {
     method: 'PUT',
-    headers: { Cookie: authHeader(token) },
+    headers: authHeaders(token),
   });
-  return handleResponse(response, true);
+  return handleJsonResponse(response, 'Failed to revoke share code.');
 }
 
-export async function getFirmwareComments(options = {}) {
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.admin}/api/firmware/comments`);
-  return handleResponse(response, true);
+export async function getFirmwareComments(options) {
+  const fetchImpl = resolveFetch(options);
+  const response = await fetchImpl(`${wn_apiBaseUrl}/api/firmware/comments`);
+  return handleJsonResponse(response, 'Failed to fetch firmware comments.');
 }
 
-export async function getCommentByFid(fid, options = {}) {
-  if (!fid) throw new Error('fid is required.');
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.admin}/api/firmware/comment/${fid}`);
-  return handleResponse(response, true);
+export async function getCommentByFid(fid, options) {
+  const fetchImpl = resolveFetch(options);
+  const response = await fetchImpl(`${wn_apiBaseUrl}/api/firmware/comment/${fid}`);
+  return handleJsonResponse(response, 'Failed to fetch comments for firmware.');
 }
 
-export async function postComment({ fid, content, user, token }, options = {}) {
-  if (!fid || !content || !user) {
-    throw new Error('fid, content, and user fields are required.');
-  }
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.admin}/api/firmware/comment/${fid}`, {
+export async function postComment({ fid, content, user, token = M5_AUTH_TOKEN }, options) {
+  if (!fid) throw new Error('fid is required to post a comment.');
+  if (!content) throw new Error('content is required to post a comment.');
+  if (!user) throw new Error('user is required to post a comment.');
+  const fetchImpl = resolveFetch(options);
+  const response = await fetchImpl(`${wn_apiBaseUrl}/api/firmware/comment/${fid}`, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
-      Cookie: authHeader(token),
+      ...authHeaders(token),
+      'content-type': 'application/json',
     },
     body: JSON.stringify({ content, user }),
   });
-  return handleResponse(response, true);
+  return handleJsonResponse(response, 'Failed to post comment.');
 }
 
-export async function lookupShareCode(code, options = {}) {
-  if (!code) throw new Error('share code is required.');
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.admin}/api/firmware/share/${code}`);
-  return handleResponse(response, true);
+export async function lookupShareCode(code, options) {
+  const fetchImpl = resolveFetch(options);
+  const response = await fetchImpl(`${wn_apiBaseUrl}/api/firmware/share/${code}`);
+  return handleJsonResponse(response, 'Failed to lookup share code.');
 }
 
-export async function requestMediaToken(mac, options = {}) {
-  if (!mac) throw new Error('mac is required.');
-  const fetchImpl = options.fetch ?? ensureFetch();
-  const response = await fetchImpl(`${BASE_URLS.mediaToken}/token`, {
+export async function requestMediaToken(mac, options) {
+  const fetchImpl = resolveFetch(options);
+  const response = await fetchImpl('http://flow.m5stack.com:5003/token', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ mac }),
   });
-  return handleResponse(response, false);
+  const payload = await handleTextResponse(response, 'Failed to request media token.');
+  try {
+    return JSON.parse(payload);
+  } catch (error) {
+    return payload.trim();
+  }
 }
 
-export const baseUrls = BASE_URLS;
+export { wn_apiBaseUrl };

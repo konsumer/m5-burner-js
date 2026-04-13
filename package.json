@@ -4,7 +4,8 @@
   "description": "Lightweight fetch client and CLI for the M5Burner API",
   "main": "index.js",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "start": "npx -y live-server web"
   },
   "keywords": [],
   "author": "konsumer",
@@ -12,7 +13,8 @@
   "type": "module",
   "files": [
     "index.js",
-    "m5-data.mjs"
+    "m5-data.mjs",
+    "web"
   ],
   "engines": {
     "node": ">=18"

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import process from 'node:process';
+import { parseArgs } from 'node:util';
 
 import {
   getCommentByFid,
@@ -23,25 +24,39 @@ import {
   updateFirmware,
 } from './index.js';
 
-const [,, command, ...args] = process.argv;
+const a = parseArgs({
+  options: {
+    token: { type: 'string', short: 't' },
+    username: { type: 'string' },
+  },
+  allowPositionals: true,
+  strict: false,
+});
+
+const { values, positionals } = a
+
+const [command, ...args] = positionals;
+const token = values.token ?? process.env.M5_AUTH_TOKEN;
 
 const usage = () => {
   console.error(`Usage:
   m5-data login <email> <password>
-  m5-data device-list <token | env:M5_AUTH_TOKEN>
+  m5-data device-list
   m5-data firmware-list
-  m5-data own-firmware <token | env:M5_AUTH_TOKEN> [username]
-  m5-data publish-firmware <token | env:M5_AUTH_TOKEN> <payload.json>
-  m5-data update-firmware <token | env:M5_AUTH_TOKEN> <fid> <version> <payload.json>
-  m5-data remove-firmware <token | env:M5_AUTH_TOKEN> <fid> <version>
-  m5-data set-publish <token | env:M5_AUTH_TOKEN> <fid> <version> <on|off|1|0>
-  m5-data share-code <token | env:M5_AUTH_TOKEN> <fid> <file>
-  m5-data revoke-share <token | env:M5_AUTH_TOKEN> <shareId>
+  m5-data own-firmware [--username <username>]
+  m5-data publish-firmware <payload.json>
+  m5-data update-firmware <fid> <version> <payload.json>
+  m5-data remove-firmware <fid> <version>
+  m5-data set-publish <fid> <version> <on|off|1|0>
+  m5-data share-code <fid> <file>
+  m5-data revoke-share <shareId>
   m5-data share-lookup <code>
   m5-data firmware-comments
   m5-data comment-by-fid <fid>
-  m5-data comment <token | env:M5_AUTH_TOKEN> <fid> <username> <content>
-  m5-data media-token <mac>`);
+  m5-data comment <fid> <username> <content>
+  m5-data media-token <mac>
+
+Token: pass --token <token> (or -t <token>), or set M5_AUTH_TOKEN env var.`);
 };
 
 const resolveFetchOverride = async () => {
@@ -83,10 +98,9 @@ const buildFormPayload = async (filePath) => {
   return payload;
 };
 
-const requireToken = (index = 0) => {
-  const token = args[index] ?? process.env.M5_AUTH_TOKEN;
+const requireToken = () => {
   if (!token) {
-    console.error('Missing token. Pass as an argument or set M5_AUTH_TOKEN.');
+    console.error('Missing token. Pass --token <token> (or -t <token>), or set M5_AUTH_TOKEN.');
     process.exit(1);
   }
   return token;
@@ -100,13 +114,12 @@ const run = async () => {
         usage();
         process.exit(1);
       }
-      const { data, token } = await login({ email, password }, withFetch());
-      console.log(JSON.stringify({ token, profile: data?.data ?? data }, null, 2));
+      const { data, token: authToken } = await login({ email, password }, withFetch());
+      console.log(JSON.stringify({ token: authToken, profile: data?.data ?? data }, null, 2));
       return;
     }
     case 'device-list': {
-      const tokenArg = requireToken(0);
-      const devices = await getDeviceList(tokenArg, withFetch());
+      const devices = await getDeviceList(requireToken(), withFetch());
       console.log(JSON.stringify(devices, null, 2));
       return;
     }
@@ -116,89 +129,76 @@ const run = async () => {
       return;
     }
     case 'own-firmware': {
-      const tokenArg = requireToken(0);
-      const username = args[1];
-      const result = await getOwnFirmware(tokenArg, withFetch(username ? { username } : undefined));
+      const username = values.username;
+      const result = await getOwnFirmware(requireToken(), withFetch(username ? { username } : undefined));
       console.log(JSON.stringify(result, null, 2));
       return;
     }
     case 'publish-firmware': {
-      const tokenArg = requireToken(0);
-      const payloadPath = args[1];
+      const [payloadPath] = args;
       if (!payloadPath) {
         console.error('Missing payload JSON.');
         process.exit(1);
       }
       const payload = await buildFormPayload(payloadPath);
-      const result = await publishFirmware(tokenArg, payload, withFetch());
+      const result = await publishFirmware(requireToken(), payload, withFetch());
       console.log(JSON.stringify(result, null, 2));
       return;
     }
     case 'update-firmware': {
-      const tokenArg = requireToken(0);
-      const fid = args[1];
-      const version = args[2];
-      const payloadPath = args[3];
+      const [fid, version, payloadPath] = args;
       if (!fid || !version || !payloadPath) {
-        console.error('Usage: m5-data update-firmware <token> <fid> <version> <payload.json>');
+        console.error('Usage: m5-data update-firmware <fid> <version> <payload.json>');
         process.exit(1);
       }
       const payload = await buildFormPayload(payloadPath);
-      const result = await updateFirmware(tokenArg, fid, version, payload, withFetch());
+      const result = await updateFirmware(requireToken(), fid, version, payload, withFetch());
       console.log(JSON.stringify(result, null, 2));
       return;
     }
     case 'remove-firmware': {
-      const tokenArg = requireToken(0);
-      const fid = args[1];
-      const version = args[2];
+      const [fid, version] = args;
       if (!fid || !version) {
-        console.error('Usage: m5-data remove-firmware <token> <fid> <version>');
+        console.error('Usage: m5-data remove-firmware <fid> <version>');
         process.exit(1);
       }
-      const result = await removeFirmwareVersion(tokenArg, fid, version, withFetch());
+      const result = await removeFirmwareVersion(requireToken(), fid, version, withFetch());
       console.log(JSON.stringify(result, null, 2));
       return;
     }
     case 'set-publish': {
-      const tokenArg = requireToken(0);
-      const fid = args[1];
-      const version = args[2];
-      const state = args[3];
+      const [fid, version, state] = args;
       if (!fid || !version || !state) {
-        console.error('Usage: m5-data set-publish <token> <fid> <version> <on|off|1|0>');
+        console.error('Usage: m5-data set-publish <fid> <version> <on|off|1|0>');
         process.exit(1);
       }
       const publish = state === 'on' || state === '1' || state === 'true';
-      const result = await setFirmwarePublishState(tokenArg, fid, version, publish, withFetch());
+      const result = await setFirmwarePublishState(requireToken(), fid, version, publish, withFetch());
       console.log(JSON.stringify(result, null, 2));
       return;
     }
     case 'share-code': {
-      const tokenArg = requireToken(0);
-      const fid = args[1];
-      const file = args[2];
+      const [fid, file] = args;
       if (!fid || !file) {
-        console.error('Usage: m5-data share-code <token> <fid> <firmwareFileName>');
+        console.error('Usage: m5-data share-code <fid> <firmwareFileName>');
         process.exit(1);
       }
-      const result = await getShareCode(tokenArg, fid, file, withFetch());
+      const result = await getShareCode(requireToken(), fid, file, withFetch());
       console.log(JSON.stringify(result, null, 2));
       return;
     }
     case 'revoke-share': {
-      const tokenArg = requireToken(0);
-      const shareId = args[1];
+      const [shareId] = args;
       if (!shareId) {
-        console.error('Usage: m5-data revoke-share <token> <shareId>');
+        console.error('Usage: m5-data revoke-share <shareId>');
         process.exit(1);
       }
-      const result = await revokeShareCode(tokenArg, shareId, withFetch());
+      const result = await revokeShareCode(requireToken(), shareId, withFetch());
       console.log(JSON.stringify(result, null, 2));
       return;
     }
     case 'share-lookup': {
-      const code = args[0];
+      const [code] = args;
       if (!code) {
         console.error('Usage: m5-data share-lookup <code>');
         process.exit(1);
@@ -213,21 +213,18 @@ const run = async () => {
       return;
     }
     case 'comment': {
-      const tokenArg = requireToken(0);
-      const fid = args[1];
-      const user = args[2];
-      const contentParts = args.slice(3);
+      const [fid, user, ...contentParts] = args;
       if (!fid || !user || contentParts.length === 0) {
-        console.error('Usage: m5-data comment <token> <fid> <username> <content>');
+        console.error('Usage: m5-data comment <fid> <username> <content>');
         process.exit(1);
       }
       const content = contentParts.join(' ');
-      const result = await postComment({ fid, user, content, token: tokenArg }, withFetch());
+      const result = await postComment({ fid, user, content, token: requireToken() }, withFetch());
       console.log(JSON.stringify(result, null, 2));
       return;
     }
     case 'media-token': {
-      const mac = args[0];
+      const [mac] = args;
       if (!mac) {
         console.error('Usage: m5-data media-token <mac>');
         process.exit(1);
@@ -237,7 +234,7 @@ const run = async () => {
       return;
     }
     case 'comment-by-fid': {
-      const fid = args[0];
+      const [fid] = args;
       if (!fid) {
         console.error('Usage: m5-data comment-by-fid <fid>');
         process.exit(1);
