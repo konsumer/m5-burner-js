@@ -82,5 +82,5 @@ jobs:
 
       - name: Publish firmware on M5 Burner
         run: |
-          npx -y m5-burner publish-firmware payload.json
+          npx -y m5-burner publish-firmware 'env:M5_AUTH_TOKEN' payload.json
 ```
