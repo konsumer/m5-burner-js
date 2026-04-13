@@ -1,6 +1,6 @@
 {
   "name": "m5-burner",
-  "version": "1.0.0",
+  "version": "0.0.0",
   "description": "Lightweight fetch client and CLI for the M5Burner API",
   "main": "index.js",
   "scripts": {
