@@ -61,9 +61,6 @@ You can put it in a github-action, like this, if you set `M5_AUTH_TOKEN` in your
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
       - uses: actions/checkout@v6
 
