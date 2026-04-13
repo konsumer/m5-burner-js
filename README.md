@@ -57,9 +57,6 @@ npx -y m5-burner publish-firmware payload.json
 
 # or pass it explicitly
 npx -y m5-burner publish-firmware payload.json --token <token>
-
-# or call the helper script directly
-node scripts/publish-firmware.mjs payload.json <token>
 ```
 
 You can put it in a github-action, like this, if you set `M5_AUTH_TOKEN` in your action-secrets:
