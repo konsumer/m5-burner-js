@@ -54,3 +54,36 @@ npx -y m5-burner login <email> <password>
 # use your token to publish
 npx -y m5-burner publish-firmware <token> payload.json
 ```
+
+You can put it in a github-action, like this, if you set `M5_AUTH_TOKEN` in your action-secrets:
+
+```yaml
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # do whater you do to build
+      
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - name: Install PlatformIO Core
+        run: pip install --upgrade platformio
+      - name: Build PlatformIO Project
+        run: pio run
+
+      - name: Publish firmware on M5 Burner
+        run: |
+          npx -y m5-burner publish-firmware payload.json
+```
