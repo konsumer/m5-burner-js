@@ -21,7 +21,7 @@ Usage:
   npx -y m5-burner media-token <mac>
 ```
 
-Pass `--token <token>` (or `-t <token>`) when you run an authenticated command, or set an environment variable named `M5_AUTH_TOKEN`, `M5_TOKEN`, `M5STACK_TOKEN`, or `token`.
+Pass `--token <token>` (or `-t <token>`) when you run an authenticated command, or set an environment variable named `M5_AUTH_TOKEN`, `M5_TOKEN`, `M5STACK_TOKEN`
 
 
 ### publishing
