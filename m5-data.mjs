@@ -35,8 +35,11 @@ const a = parseArgs({
 
 const { values, positionals } = a
 
+const tokenEnvCandidates = ['M5_AUTH_TOKEN', 'M5_TOKEN', 'M5STACK_TOKEN', 'token'];
+const resolveEnvToken = () => tokenEnvCandidates.map((key) => process.env[key]).find((val) => val && val.length > 0);
+
 const [command, ...args] = positionals;
-const token = values.token ?? process.env.M5_AUTH_TOKEN;
+const token = values.token ?? resolveEnvToken();
 
 const usage = () => {
   console.error(`Usage:
@@ -100,7 +103,7 @@ const buildFormPayload = async (filePath) => {
 
 const requireToken = () => {
   if (!token) {
-    console.error('Missing token. Pass --token <token> (or -t <token>), or set M5_AUTH_TOKEN.');
+    console.error('Missing token. Pass --token <token> (or -t <token>), or set one of: ' + tokenEnvCandidates.join(', '));
     process.exit(1);
   }
   return token;

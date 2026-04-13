@@ -5,23 +5,23 @@ This is an API and CLI for interacting with M5 Burner data. You can use it to li
 ```
 Usage:
   npx -y m5-burner login <email> <password>
-  npx -y m5-burner device-list <token | env:M5_AUTH_TOKEN>
+  npx -y m5-burner device-list [--token <token>]
   npx -y m5-burner firmware-list
-  npx -y m5-burner own-firmware <token | env:M5_AUTH_TOKEN> [username]
-  npx -y m5-burner publish-firmware <token | env:M5_AUTH_TOKEN> <payload.json>
-  npx -y m5-burner update-firmware <token | env:M5_AUTH_TOKEN> <fid> <version> <payload.json>
-  npx -y m5-burner remove-firmware <token | env:M5_AUTH_TOKEN> <fid> <version>
-  npx -y m5-burner set-publish <token | env:M5_AUTH_TOKEN> <fid> <version> <on|off|1|0>
-  npx -y m5-burner share-code <token | env:M5_AUTH_TOKEN> <fid> <file>
-  npx -y m5-burner revoke-share <token | env:M5_AUTH_TOKEN> <shareId>
+  npx -y m5-burner own-firmware [--username <username>] [--token <token>]
+  npx -y m5-burner publish-firmware <payload.json> [--token <token>]
+  npx -y m5-burner update-firmware <fid> <version> <payload.json> [--token <token>]
+  npx -y m5-burner remove-firmware <fid> <version> [--token <token>]
+  npx -y m5-burner set-publish <fid> <version> <on|off|1|0> [--token <token>]
+  npx -y m5-burner share-code <fid> <file> [--token <token>]
+  npx -y m5-burner revoke-share <shareId> [--token <token>]
   npx -y m5-burner share-lookup <code>
   npx -y m5-burner firmware-comments
   npx -y m5-burner comment-by-fid <fid>
-  npx -y m5-burner comment <token | env:M5_AUTH_TOKEN> <fid> <username> <content>
+  npx -y m5-burner comment <fid> <username> <content> [--token <token>]
   npx -y m5-burner media-token <mac>
 ```
 
-Use `login` to get a token, and then set `M5_AUTH_TOKEN` environment-variable, and operations after that will be authenticated.
+Pass `--token <token>` (or `-t <token>`) when you run an authenticated command, or set an environment variable named `M5_AUTH_TOKEN`, `M5_TOKEN`, `M5STACK_TOKEN`, or `token`.
 
 
 ### publishing
@@ -52,7 +52,14 @@ Make an image `cover.png` and your `firmware.bin` next to the file.
 npx -y m5-burner login <email> <password>
 
 # use your token to publish
-npx -y m5-burner publish-firmware <token> payload.json
+export M5_AUTH_TOKEN="$(npx -y m5-burner login <email> <password> | jq -r .token)"
+npx -y m5-burner publish-firmware payload.json
+
+# or pass it explicitly
+npx -y m5-burner publish-firmware payload.json --token <token>
+
+# or call the helper script directly
+node scripts/publish-firmware.mjs payload.json <token>
 ```
 
 You can put it in a github-action, like this, if you set `M5_AUTH_TOKEN` in your action-secrets:
@@ -81,6 +88,8 @@ jobs:
         run: pio run
 
       - name: Publish firmware on M5 Burner
+        env:
+          M5_AUTH_TOKEN: ${{ secrets.M5_AUTH_TOKEN }}
         run: |
-          npx -y m5-burner publish-firmware 'env:M5_AUTH_TOKEN' payload.json
+          npx -y m5-burner publish-firmware payload.json
 ```
